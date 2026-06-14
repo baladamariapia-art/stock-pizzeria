@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Pizzería</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #1a1a2e; color: white; text-align: center; padding: 20px; margin: 0; }
+    h1 { color: #e94560; font-size: 24px; }
+    #webcam-container { margin: 10px auto; }
+    canvas { border-radius: 12px; width: 250px; height: 250px; }
+    #resultado { font-size: 20px; font-weight: bold; margin: 15px 0; padding: 10px; background: #16213e; border-radius: 8px; }
+    #confianza { font-size: 14px; color: #aaa; margin-bottom: 10px; }
+    #btn-descontar { background: #e94560; color: white; border: none; padding: 18px 40px; font-size: 20px; border-radius: 12px; cursor: pointer; width: 90%; max-width: 300px; margin-top: 10px; }
+    #btn-descontar:disabled { background: #555; cursor: not-allowed; }
+    #mensaje { margin-top: 15px; font-size: 16px; min-height: 30px; }
+    .ok { color: #4ecca3; }
+    .error { color: #e94560; }
+  </style>
+</head>
+<body>
+  <h1>🍕 Stock Pizzería</h1>
+  <div id="webcam-container"></div>
+  <div id="resultado">Cargando...</div>
+  <div id="confianza"></div>
+  <button id="btn-descontar" disabled onclick="descontarStock()">📦 Descontar 1 unidad</button>
+  <div id="mensaje"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.5/dist/teachablemachine-image.min.js"></script>
+
+  <script>
+    const URL_MODELO = "https://teachablemachine.withgoogle.com/models/097CXQNg-/";
+    const URL_PUENTE = "https://script.google.com/macros/s/AKfycbyDrKRKZLg9hrdHH2JSp6OoVsBnHvi4lor6UxmWV7p4imU776OxqT7I2pHIfvt6yMI/exec";
+
+    let model, webcam;
+    let productoDetectado = "";
+    let confianzaDetectada = 0;
+    let procesando = false;
+
+    async function iniciar() {
+      try {
+        document.getElementById("resultado").textContent = "Cargando modelo...";
+        model = await tmImage.load(URL_MODELO + "model.json", URL_MODELO + "metadata.json");
+        document.getElementById("resultado").textContent = "Iniciando cámara...";
+        webcam = new tmImage.Webcam(224, 224, false);
+        await webcam.setup({ facingMode: "environment" });
+        await webcam.play();
+        document.getElementById("webcam-container").appendChild(webcam.canvas);
+        webcam.canvas.style.borderRadius = "12px";
+        webcam.canvas.style.width = "250px";
+        webcam.canvas.style.height = "250px";
+        document.getElementById("resultado").textContent = "Apuntá a un producto";
+        setInterval(async () => {
+          if (!procesando) {
+            procesando = true;
+            webcam.update();
+            await predecir();
+            procesando = false;
+          }
+        }, 500);
+      } catch(err) {
+        document.getElementById("resultado").textContent = "❌ Error: " + err.message;
+        console.error(err);
+      }
+    }
+
+    async function predecir() {
+      const prediction = await model.predict(webcam.canvas);
+      const mejor = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
+      confianzaDetectada = mejor.probability;
+      productoDetectado = mejor.className;
+      const pct = Math.round(confianzaDetectada * 100);
+      document.getElementById("resultado").textContent = productoDetectado;
+      document.getElementById("confianza").textContent = "Confianza: " + pct + "%";
+      const btn = document.getElementById("btn-descontar");
+      if (confianzaDetectada >= 0.80) {
+        btn.disabled = false;
+        btn.textContent = '📦 Descontar 1 de "' + productoDetectado + '"';
+      } else {
+        btn.disabled = true;
+        btn.textContent = "📦 Apuntá a un producto...";
+      }
+    }
+
+    async function descontarStock() {
+      const btn = document.getElementById("btn-descontar");
+      const msg = document.getElementById("mensaje");
+      btn.disabled = true;
+      msg.textContent = "⏳ Enviando...";
+      msg.className = "";
+      try {
+        await fetch(URL_PUENTE, {
+          method: "POST",
+          mode: "no-cors",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ producto: productoDetectado, cantidad: -1 })
+        });
+        msg.textContent = "✅ ¡" + productoDetectado + " descontado!";
+        msg.className = "ok";
+      } catch (e) {
+        msg.textContent = "❌ Sin conexión a internet.";
+        msg.className = "error";
+      }
+      setTimeout(() => { btn.disabled = false; }, 2000);
+    }
+
+    iniciar();
+  </script>
+</body>
+</html>
